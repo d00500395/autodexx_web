@@ -1,0 +1,73 @@
+<div class="card selector-card">
+  <div class="tabs">
+    <button class="tab-btn" :class="{ 'is-active': tab === 'manual' }" @click="$emit('update:tab', 'manual')">Manual Selection</button>
+    <button class="tab-btn" :class="{ 'is-active': tab === 'vin' }" @click="$emit('update:tab', 'vin')">VIN Decode</button>
+  </div>
+
+  <div v-if="tab === 'vin'">
+    <div class="form-group">
+      <label for="vin-input-shared">Enter your 17-digit VIN</label>
+      <div class="inline-row">
+        <input id="vin-input-shared" class="form-input" :value="vinInput"
+               @input="$emit('update:vinInput', $event.target.value)"
+               placeholder="e.g. 1HGBH41JXMN109186" maxlength="17"
+               :disabled="vinLoading" style="flex:1;" />
+        <button class="btn btn--primary" @click="$emit('decode-vin')" :disabled="vinLoading || vinInput.length < 17">
+          {{ vinLoading ? 'Decoding...' : 'Decode' }}
+          <span v-if="vinLoading" class="spinner"></span>
+        </button>
+      </div>
+      <p class="form-help">You can find your VIN on the driver-side door jamb or the lower-left corner of your windshield.</p>
+      <p v-if="vinError" class="form-error">{{ vinError }}</p>
+    </div>
+  </div>
+
+  <div v-if="tab === 'manual'">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="sel-year-shared">Year <span class="required">*</span></label>
+        <select id="sel-year-shared" class="form-select" :value="selectedYear" @change="$emit('update:selectedYear', $event.target.value)" :disabled="loadingYears">
+          <option value="">{{ loadingYears ? 'Loading...' : 'Select Year' }}</option>
+          <option v-for="y in years" :key="y" :value="y">{{ y }}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Make <span class="required">*</span></label>
+        <searchable-dropdown :options="makes" :model-value="selectedMake" placeholder="Select Make"
+          :loading="loadingMakes" label="Vehicle Make" @update:modelValue="$emit('update:selectedMake', $event)" />
+      </div>
+      <div class="form-group">
+        <label>Model <span class="required">*</span></label>
+        <searchable-dropdown :options="models" :model-value="selectedModel" placeholder="Select Model"
+          :disabled="!selectedMake || !selectedYear" :loading="loadingModels" label="Vehicle Model"
+          @update:modelValue="$emit('update:selectedModel', $event)" />
+      </div>
+    </div>
+    <div class="form-row" v-if="selectedModel">
+      <div class="form-group">
+        <label for="sel-trim-shared">Trim (optional)</label>
+        <input id="sel-trim-shared" class="form-input" :value="selectedTrim"
+          @input="$emit('update:selectedTrim', $event.target.value)"
+          list="trim-options-shared" placeholder="e.g. XLT, Sport, Limited" />
+        <datalist id="trim-options-shared">
+          <option v-for="t in trimOptions" :key="t" :value="t"></option>
+        </datalist>
+        <p class="form-help" v-if="loadingTrims">Loading NHTSA trim suggestions...</p>
+        <p class="form-help" v-if="trimOptions.length === 0 && !loadingTrims">No trim options from NHTSA for this selection. You can still enter trim after VIN decode.</p>
+      </div>
+      <div class="form-group">
+        <label for="sel-engine-shared">Engine (optional)</label>
+        <input id="sel-engine-shared" class="form-input" :value="selectedEngine"
+          @input="$emit('update:selectedEngine', $event.target.value)" placeholder="e.g. 2.5L 4-Cylinder" />
+      </div>
+    </div>
+  </div>
+
+  <div v-if="showConfirm && canConfirm" class="vehicle-summary" aria-live="polite">
+    <div class="vehicle-summary__text">{{ vehicleSummary }}</div>
+    <div class="vehicle-summary__actions">
+      <button class="btn btn--primary" @click="$emit('confirm')">{{ confirmLabel }}</button>
+      <button class="btn btn--outline" @click="$emit('clear')">Clear</button>
+    </div>
+  </div>
+</div>

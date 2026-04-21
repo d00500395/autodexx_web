@@ -1,0 +1,40 @@
+<div class="auth-layout">
+  <div class="card auth-card">
+    <h1 class="page-title auth-title">{{ isRegister ? 'Create Account' : 'Sign In' }}</h1>
+    <p class="page-subtitle auth-subtitle">{{ isRegister ? 'Create your AutoDEXX account to save vehicles, compare prices, and track the best deals.' : 'Welcome back. Sign in to access your garage and watchlist.' }}</p>
+
+    <div v-if="error" class="alert alert--error">{{ error }}</div>
+
+    <div class="stack-md">
+      <div v-if="isRegister" class="form-group">
+        <label for="reg-email">Email</label>
+        <input id="reg-email" class="form-input" v-model="email" type="email" placeholder="you@example.com" />
+      </div>
+
+      <div class="form-group">
+        <label for="auth-username">Username</label>
+        <input id="auth-username" class="form-input" v-model="username" placeholder="Username" @keyup.enter="submit" />
+      </div>
+
+      <div class="form-group">
+        <label for="auth-password">Password</label>
+        <input id="auth-password" class="form-input" v-model="password" type="password" placeholder="Password" @keyup.enter="submit" />
+      </div>
+    </div>
+
+    <button class="btn btn--primary btn--block" @click="submit" :disabled="loading">
+      <template v-if="loading">{{ isRegister ? 'Creating...' : 'Signing in...' }}</template>
+      <template v-else>{{ isRegister ? 'Create Account' : 'Sign In' }}</template>
+    </button>
+
+    <div class="auth-divider"><span>or</span></div>
+
+    <div v-if="googleEnabled" ref="googleButtonRef" class="google-button-slot" aria-label="Google sign-in"></div>
+    <p v-else class="muted centered">Set <strong>VITE_GOOGLE_CLIENT_ID</strong> to enable Google sign-in.</p>
+
+    <p class="centered muted">
+      {{ isRegister ? 'Already have an account?' : "Don't have an account?" }}
+      <a href="#" @click.prevent="toggleMode">{{ isRegister ? 'Sign In' : 'Create Account' }}</a>
+    </p>
+  </div>
+</div>

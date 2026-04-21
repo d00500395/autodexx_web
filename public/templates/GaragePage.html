@@ -1,0 +1,107 @@
+<div>
+  <section class="section-header">
+    <div>
+      <p class="section-eyebrow">Garage</p>
+      <h1 class="page-title">Manage your vehicles.</h1>
+      <p class="page-subtitle">Save your vehicles to get personalized part recommendations and verified fitment for every search.</p>
+    </div>
+    <button v-if="store.isAuthenticated" class="btn btn--primary" @click="showForm = !showForm">
+      {{ showForm ? 'Cancel' : '+ Add Vehicle' }}
+    </button>
+  </section>
+
+  <div v-if="!store.isAuthenticated" class="card auth-callout">
+    <h2 class="card__title">Sign in to use your garage</h2>
+    <p class="muted">Saved vehicles come from the shared backend, so you need an authenticated session before you can add, remove, or set a default vehicle.</p>
+    <router-link to="/auth" class="btn btn--primary">Go to Sign In</router-link>
+  </div>
+
+  <template v-else>
+    <div v-if="store.garageError" class="alert alert--error">{{ store.garageError }}</div>
+
+    <div v-if="showForm" class="card stack-lg">
+      <div>
+        <h2 class="card__title">Add a Vehicle</h2>
+        <p class="muted">Choose a vehicle manually or decode it from a VIN, then save it directly into the shared garage table.</p>
+      </div>
+      <div v-if="formError" class="alert alert--error">{{ formError }}</div>
+      <vehicle-selection-form
+        :tab="tab"
+        :years="years"
+        :makes="makes"
+        :models="models"
+        :trim-options="trimOptions"
+        :loading-years="loadingYears"
+        :loading-makes="loadingMakes"
+        :loading-models="loadingModels"
+        :loading-trims="loadingTrims"
+        :selected-year="selectedYear"
+        :selected-make="selectedMake"
+        :selected-model="selectedModel"
+        :selected-trim="selectedTrim"
+        :selected-engine="selectedEngine"
+        :vin-input="vinInput"
+        :vin-error="vinError"
+        :vin-loading="vinLoading"
+        :show-confirm="false"
+        @update:tab="tab = $event"
+        @update:selectedYear="selectedYear = $event"
+        @update:selectedMake="selectedMake = $event"
+        @update:selectedModel="selectedModel = $event"
+        @update:selectedTrim="selectedTrim = $event"
+        @update:selectedEngine="selectedEngine = $event"
+        @update:vinInput="vinInput = $event"
+        @decode-vin="decodeVin"
+      />
+      <div class="form-group">
+        <label>Nickname</label>
+        <input class="form-input" v-model="nickname" placeholder="e.g. Daily Driver" maxlength="30" />
+      </div>
+      <button class="btn btn--primary" @click="addVehicle" :disabled="formLoading">
+        {{ formLoading ? 'Saving...' : 'Save Vehicle' }}
+      </button>
+    </div>
+
+    <div v-if="store.garageLoading" class="card muted">Loading garage...</div>
+
+    <div v-else-if="store.garageVehicles.length === 0" class="empty-state card">
+      <div class="empty-state__title">Your garage is empty</div>
+      <p>Add your first vehicle to start syncing a confirmed selection across search and part detail views.</p>
+    </div>
+
+    <div v-else class="garage-grid">
+      <article v-for="vehicle in store.garageVehicles" :key="vehicle._id" class="garage-card" :class="{ 'is-default': vehicle.isDefault }">
+        <span v-if="vehicle.isDefault" class="garage-card__default-badge">Default</span>
+        <div v-if="editingNicknameId === vehicle._id" class="stack-sm">
+          <input class="form-input" v-model="nicknameDraft" maxlength="30" placeholder="Vehicle nickname" />
+          <div class="inline-row wrap">
+            <button class="btn btn--primary btn--small" @click="saveNickname(vehicle._id)">Save Nickname</button>
+            <button class="btn btn--outline btn--small" @click="cancelNicknameEdit">Cancel</button>
+          </div>
+        </div>
+        <div v-else-if="vehicle.nickname" class="garage-card__nickname">{{ vehicle.nickname }}</div>
+        <div class="garage-card__vehicle">{{ vStr(vehicle) }}</div>
+        <div class="garage-card__details">{{ [vehicle.engine, vehicle.bodyStyle, vehicle.driveType].filter(Boolean).join(' · ') || 'No extra vehicle details saved' }}</div>
+        <div class="garage-card__actions">
+          <button class="btn btn--outline btn--small" @click="useVehicle(vehicle)">Use This Vehicle</button>
+          <button v-if="!vehicle.isDefault" class="btn btn--outline btn--small" @click="setDefault(vehicle._id)">Set Default</button>
+          <button v-if="editingNicknameId !== vehicle._id" class="btn btn--outline btn--small" @click="beginNicknameEdit(vehicle)">
+            {{ vehicle.nickname ? 'Edit Nickname' : 'Add Nickname' }}
+          </button>
+          <button class="btn btn--danger btn--small" @click="confirmRemove(vehicle._id)">Remove</button>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <div v-if="removeModalId" class="modal-overlay" @click.self="removeModalId = null">
+    <div class="card modal-dialog">
+      <h3 class="card__title">Remove Vehicle</h3>
+      <p class="muted">Are you sure you want to remove this vehicle from your garage?</p>
+      <div class="inline-row inline-row--end">
+        <button class="btn btn--outline" @click="removeModalId = null">Cancel</button>
+        <button class="btn btn--danger" @click="confirmRemoveAction">Remove</button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,29 @@
+<div class="searchable-dropdown">
+  <input
+    ref="inputRef"
+    class="form-input"
+    :value="displayValue"
+    :placeholder="loading ? 'Loading...' : placeholder"
+    :disabled="disabled || loading"
+    :aria-label="label"
+    role="combobox"
+    aria-autocomplete="list"
+    :aria-expanded="isOpen"
+    @focus="open"
+    @blur="onBlur"
+    @input="onInput"
+    @keydown="onKeydown"
+  />
+  <span v-if="loading" class="spinner spinner--inline"></span>
+  <ul v-if="isOpen && !loading" class="searchable-dropdown__list" role="listbox">
+    <li v-if="filtered.length === 0" class="searchable-dropdown__empty">No results</li>
+    <li v-for="(opt, i) in filtered" :key="opt"
+        class="searchable-dropdown__item"
+        :class="{ 'is-highlighted': i === highlightIdx }"
+        role="option"
+        :aria-selected="opt === modelValue"
+        @mousedown.prevent="select(opt)">
+      {{ opt }}
+    </li>
+  </ul>
+</div>
