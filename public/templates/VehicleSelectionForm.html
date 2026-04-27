@@ -43,12 +43,12 @@
           @update:modelValue="$emit('update:selectedModel', $event)" />
       </div>
     </div>
-    <div class="form-row" v-if="selectedModel">
+    <div class="form-row form-row--trim-engine" v-if="selectedModel">
       <div class="form-group">
-        <label for="sel-trim-shared">Trim (optional)</label>
+        <label for="sel-trim-shared">Trim <span class="required">*</span></label>
         <input id="sel-trim-shared" class="form-input" :value="selectedTrim"
           @input="$emit('update:selectedTrim', $event.target.value)"
-          list="trim-options-shared" placeholder="e.g. XLT, Sport, Limited" />
+          list="trim-options-shared" placeholder="e.g. XLT, Sport, Limited" required />
         <datalist id="trim-options-shared">
           <option v-for="t in trimOptions" :key="t" :value="t"></option>
         </datalist>
@@ -56,9 +56,9 @@
         <p class="form-help" v-if="trimOptions.length === 0 && !loadingTrims">No trim options from NHTSA for this selection. You can still enter trim after VIN decode.</p>
       </div>
       <div class="form-group">
-        <label for="sel-engine-shared">Engine (optional)</label>
+        <label for="sel-engine-shared">Engine <span class="required">*</span></label>
         <input id="sel-engine-shared" class="form-input" :value="selectedEngine"
-          @input="$emit('update:selectedEngine', $event.target.value)" placeholder="e.g. 2.5L 4-Cylinder" />
+          @input="$emit('update:selectedEngine', $event.target.value)" placeholder="e.g. 2.5L 4-Cylinder" required />
       </div>
     </div>
   </div>
@@ -66,7 +66,7 @@
   <div v-if="showConfirm && canConfirm" class="vehicle-summary" aria-live="polite">
     <div class="vehicle-summary__text">{{ vehicleSummary }}</div>
     <div class="vehicle-summary__actions">
-      <button class="btn btn--primary" @click="$emit('confirm')">{{ confirmLabel }}</button>
+      <button :class="confirmButtonClass" @click="$emit('confirm')" :disabled="confirmDisabled">{{ confirmLabel }}</button>
       <button class="btn btn--outline" @click="$emit('clear')">Clear</button>
     </div>
   </div>

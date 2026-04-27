@@ -2,3 +2,6 @@
 node_modules
 .env.local
 dist
+server/api_intercept_outputs
+.venv
+.env

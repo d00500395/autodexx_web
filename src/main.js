@@ -1,14 +1,27 @@
-import { createApp, computed, inject, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { createApp, computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { createRouter, createWebHistory, useRoute, useRouter } from 'vue-router';
 import './styles.css';
-import { buildVehicleFitmentId, getVehicleFitmentId, mockParts } from './data/mock-parts.js';
+import { buildVehicleFitmentId, getVehicleFitmentId } from './data/mock-parts.js';
 
 const API = import.meta.env.VITE_API_BASE || '/api';
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const CONFIRMED_VEHICLE_KEY = 'confirmedVehicle';
-const WATCHLIST_KEY = 'autodexx.vue.watchlist';
-const DEFAULT_WATCHLIST = ['tie-rod-end', 'ceramic-brake-pad-kit'];
+const GUEST_PARTS_KEY = 'guestSearchParts';
+const THEME_PREFERENCE_KEY = 'autodexx.themePreference';
 let store;
+
+function readThemePreference() {
+  const stored = window.localStorage.getItem(THEME_PREFERENCE_KEY);
+  return ['light', 'dark', 'manual'].includes(stored) ? stored : 'manual';
+}
+
+function applyThemePreference(preference) {
+  if (preference === 'manual') {
+    document.documentElement.removeAttribute('data-theme');
+    return;
+  }
+  document.documentElement.setAttribute('data-theme', preference);
+}
 
 function readJson(key, fallback) {
   try {
@@ -70,10 +83,126 @@ function partMatchesVehicle(part, vehicle) {
 }
 
 function money(value) {
+  if (value === null || value === undefined || value === '') return '$0.00';
+  const normalized = Number(String(value).replace(/[^0-9.-]/g, ''));
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-  }).format(value);
+  }).format(Number.isFinite(normalized) ? normalized : 0);
+}
+
+function resolveRetailerUrl(url, domain, fallbackUrl = '') {
+  const raw = String(url || '').trim();
+  if (!raw || raw === '#') return fallbackUrl || '#';
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const base = String(fallbackUrl || '').trim() || (domain ? `https://www.${domain}` : '');
+  if (!base) return raw;
+
+  try {
+    return new URL(raw, base).toString();
+  } catch {
+    return raw;
+  }
+}
+
+function searchRecordToPart(record) {
+  const retailers = Array.isArray(record?.retailers) ? record.retailers : [];
+  const offersByTag = { recommended: [], 'lowest price': [], premium: [] };
+
+  retailers.forEach((retailer) => {
+    const tagged = Array.isArray(retailer?.taggedProducts) ? retailer.taggedProducts : [];
+    tagged.forEach((entry) => {
+      const tag = String(entry?.tag || '').toLowerCase();
+      const product = entry?.product || {};
+      if (!offersByTag[tag]) return;
+      offersByTag[tag].push({
+        retailer: retailer.retailerName || retailer.domain,
+        domain: retailer.domain,
+        price: product.price,
+        // availability: product.availability || 'Unknown',
+        warrantyLabel: tag,
+        affiliateUrl: resolveRetailerUrl(product.href || retailer.targetUrl || '#', retailer.domain, retailer.targetUrl || ''),
+        title: product.title || '',
+        brand: product.brand || '',
+        partNum: product.partNum || '',
+        currency: product.currency || 'USD',
+      });
+    });
+  });
+
+  const fallbackOffers = offersByTag.recommended.length
+    ? offersByTag.recommended
+    : offersByTag['lowest price'].length
+      ? offersByTag['lowest price']
+      : offersByTag.premium;
+
+  if (!fallbackOffers.length) {
+    fallbackOffers.push({
+      retailer: 'No successful retailer',
+      domain: 'n/a',
+      price: 0,
+      availability: 'Unavailable',
+      warrantyLabel: 'n/a',
+      affiliateUrl: '#',
+      title: '',
+      brand: '',
+      partNum: '',
+      currency: 'USD',
+    });
+  }
+
+  return {
+    id: record.id,
+    name: record.partQuery,
+    brand: 'AutoDexx',
+    category: 'Part Recommendations',
+    isSearchRecord: true,
+    description: `Multi-retailer recommendations for ${record.vehicleQuery}`,
+    warranty: 'Retailer-specific',
+    compatibilityNote: `Query vehicle: ${record.vehicleQuery}`,
+    tags: (record.successfulDomains || []).slice(0, 3),
+    supportedVehicleIds: [],
+    offers: fallbackOffers,
+    retailerOffersByTag: offersByTag,
+    sourceRecord: record,
+  };
+}
+
+function normalizeRetailerName(domain) {
+  const names = {
+    'oreillyauto.com': "O'Reilly Auto Parts",
+    'autozone.com': 'AutoZone',
+    'napaonline.com': 'NAPA',
+    'ebay.com': 'eBay',
+    'rockauto.com': 'RockAuto',
+  };
+  return names[domain] || domain;
+}
+
+function scrapeResponseToPart(payload, vehicleQuery, partQuery) {
+  const results = payload?.results || {};
+  const retailers = Object.entries(results).map(([domain, result]) => {
+    const tagged = Array.isArray(result?.tagged_products) ? result.tagged_products : [];
+    return {
+      domain,
+      retailerName: normalizeRetailerName(domain),
+      targetUrl: resolveRetailerUrl(result?.source_url || result?.target_url || '#', domain),
+      taggedProducts: tagged,
+    };
+  });
+
+  const successfulDomains = retailers
+    .filter((retailer) => Array.isArray(retailer.taggedProducts) && retailer.taggedProducts.length)
+    .map((retailer) => retailer.domain);
+
+  return searchRecordToPart({
+    id: `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    vehicleQuery,
+    partQuery,
+    successfulDomains,
+    retailers,
+  });
 }
 
 async function apiFetch(path, options = {}) {
@@ -90,7 +219,7 @@ async function apiFetch(path, options = {}) {
   const payload = contentType.includes('application/json') ? await response.json() : null;
 
   if (!response.ok) {
-    throw new Error(payload?.error || `Request failed (${response.status})`);
+    throw new Error(payload?.error || payload?.detail || `Request failed (${response.status})`);
   }
 
   return payload;
@@ -136,9 +265,14 @@ function createStore() {
     garageVehicles: [],
     garageLoading: false,
     garageError: '',
+    partsLoading: false,
+    searchLoading: false,
+    searchStatusMessage: '',
+    partsError: '',
     confirmedVehicle: readJson(CONFIRMED_VEHICLE_KEY, null),
-    watchlistIds: readJson(WATCHLIST_KEY, DEFAULT_WATCHLIST),
-    parts: mockParts,
+    watchlistIds: [],
+    themePreference: readThemePreference(),
+    parts: readJson(GUEST_PARTS_KEY, []),
 
     get isAuthenticated() {
       return Boolean(this.authUser);
@@ -154,6 +288,104 @@ function createStore() {
 
     get recentParts() {
       return this.parts.slice(0, 3);
+    },
+
+    async refreshParts() {
+      if (!this.authUser) {
+        this.parts = readJson(GUEST_PARTS_KEY, []);
+        this.watchlistIds = [];
+        return;
+      }
+
+      this.partsLoading = true;
+      this.partsError = '';
+
+      try {
+        const [searches, watchlist] = await Promise.all([
+          apiFetch('/parts/searches'),
+          apiFetch('/parts/watchlist'),
+        ]);
+
+        const byId = new Map();
+        searches.forEach((record) => byId.set(record.id, record));
+        watchlist.forEach((record) => byId.set(record.id, record));
+
+        this.parts = Array.from(byId.values()).map(searchRecordToPart);
+        this.watchlistIds = watchlist.map((item) => item.id);
+        window.sessionStorage.removeItem(GUEST_PARTS_KEY);
+      } catch (error) {
+        this.partsError = error.message;
+      } finally {
+        this.partsLoading = false;
+      }
+    },
+
+    async searchRecommendations({ vehicleQuery, partQuery }) {
+      const retailers = [
+        "O'Reilly Auto Parts",
+        'AutoZone',
+        'NAPA',
+        'eBay',
+        'RockAuto',
+      ];
+      let stepIndex = 0;
+
+      this.searchLoading = true;
+      this.partsError = '';
+      this.searchStatusMessage = `Getting part recommendations from ${retailers[0]}...`;
+
+      const ticker = window.setInterval(() => {
+        stepIndex = (stepIndex + 1) % retailers.length;
+        this.searchStatusMessage = `Getting part recommendations from ${retailers[stepIndex]}...`;
+      }, 1200);
+
+      try {
+        let part;
+        if (this.authUser) {
+          const payload = await apiFetch('/parts/search', {
+            method: 'POST',
+            body: JSON.stringify({ vehicleQuery, partQuery }),
+          });
+
+          if (payload.status === 'error') {
+            throw new Error(payload.message || 'Autodexx is not available at the moment. Please try again later.');
+          }
+          part = searchRecordToPart(payload.search);
+        } else {
+          const payload = await apiFetch('/search', {
+            method: 'POST',
+            body: JSON.stringify({ vehicle_query: vehicleQuery, part_query: partQuery }),
+          });
+
+          if (payload.status === 'error') {
+            throw new Error(payload.message || 'Autodexx is not available at the moment. Please try again later.');
+          }
+          part = scrapeResponseToPart(payload, vehicleQuery, partQuery);
+        }
+
+        this.parts = [part, ...this.parts.filter((entry) => entry.id !== part.id)];
+        if (!this.authUser) {
+          window.sessionStorage.setItem(GUEST_PARTS_KEY, JSON.stringify(this.parts));
+        }
+        return part;
+      } finally {
+        window.clearInterval(ticker);
+        this.searchLoading = false;
+        this.searchStatusMessage = '';
+      }
+    },
+
+    async clearSearchHistory() {
+      this.partsError = '';
+
+      if (this.authUser) {
+        await apiFetch('/parts/searches', { method: 'DELETE' });
+        await this.refreshParts();
+        return;
+      }
+
+      this.parts = [];
+      window.sessionStorage.removeItem(GUEST_PARTS_KEY);
     },
 
     persistConfirmedVehicle(vehicle) {
@@ -197,9 +429,12 @@ function createStore() {
 
       if (this.authUser) {
         await this.refreshGarage();
+        await this.refreshParts();
       } else {
         this.garageVehicles = [];
         this.garageError = '';
+        this.parts = [];
+        this.watchlistIds = [];
       }
     },
 
@@ -229,6 +464,7 @@ function createStore() {
       });
       this.clearConfirmedVehicle();
       await this.refreshGarage();
+      await this.refreshParts();
     },
 
     async register(username, email, password) {
@@ -238,6 +474,7 @@ function createStore() {
       });
       this.clearConfirmedVehicle();
       await this.refreshGarage();
+      await this.refreshParts();
     },
 
     async loginWithGoogle(credential) {
@@ -247,6 +484,7 @@ function createStore() {
       });
       this.clearConfirmedVehicle();
       await this.refreshGarage();
+      await this.refreshParts();
     },
 
     async logout() {
@@ -255,6 +493,15 @@ function createStore() {
       this.garageVehicles = [];
       this.garageError = '';
       this.clearConfirmedVehicle();
+      this.parts = [];
+      this.watchlistIds = [];
+    },
+
+    setThemePreference(preference) {
+      if (!['light', 'dark', 'manual'].includes(preference)) return;
+      this.themePreference = preference;
+      window.localStorage.setItem(THEME_PREFERENCE_KEY, preference);
+      applyThemePreference(preference);
     },
 
     async addVehicle(vehicle) {
@@ -310,11 +557,24 @@ function createStore() {
       return this.watchlistIds.includes(partId);
     },
 
-    toggleWatchlist(partId) {
-      this.watchlistIds = this.watchlistIds.includes(partId)
-        ? this.watchlistIds.filter((id) => id !== partId)
-        : [...this.watchlistIds, partId];
-      window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(this.watchlistIds));
+    async toggleWatchlist(partId) {
+      if (!this.authUser) {
+        this.partsError = 'Please sign in to save searches to your watchlist.';
+        return;
+      }
+
+      const isSaved = this.watchlistIds.includes(partId);
+      if (isSaved) {
+        await apiFetch(`/parts/watchlist/${partId}`, { method: 'DELETE' });
+        this.watchlistIds = this.watchlistIds.filter((id) => id !== partId);
+        return;
+      }
+
+      await apiFetch('/parts/watchlist', {
+        method: 'POST',
+        body: JSON.stringify({ partSearchId: partId }),
+      });
+      this.watchlistIds = [...this.watchlistIds, partId];
     },
 
     getPartById(partId) {
@@ -432,12 +692,14 @@ const VehicleSelectionForm = {
     vinLoading: { type: Boolean, default: false },
     showConfirm: { type: Boolean, default: false },
     confirmLabel: { type: String, default: 'Confirm Vehicle' },
+    confirmDisabled: { type: Boolean, default: false },
   },
   emits: ['update:tab', 'update:selectedYear', 'update:selectedMake', 'update:selectedModel', 'update:selectedTrim', 'update:selectedEngine', 'update:vinInput', 'decode-vin', 'confirm', 'clear'],
   setup(props) {
     const vehicleSummaryText = computed(() => [props.selectedYear, props.selectedMake, props.selectedModel, props.selectedTrim, props.selectedEngine].filter(Boolean).join(' '));
-    const canConfirm = computed(() => Boolean(props.selectedYear && props.selectedMake && props.selectedModel));
-    return { vehicleSummary: vehicleSummaryText, canConfirm };
+    const canConfirm = computed(() => Boolean(props.selectedYear && props.selectedMake && props.selectedModel && props.selectedTrim && props.selectedEngine));
+    const confirmButtonClass = computed(() => (props.confirmDisabled ? 'btn btn--outline' : 'btn btn--primary'));
+    return { vehicleSummary: vehicleSummaryText, canConfirm, confirmButtonClass };
   },
   template: templateCache.VehicleSelectionForm,
 };
@@ -654,13 +916,13 @@ const HomePage = {
       <section class="hero">
         <div class="hero-panel hero-copy stack-lg">
           <div>
-            <p class="section-eyebrow">AutoDEXX</p>
+            <p class="section-eyebrow">AutoDexx</p>
             <h1 class="page-title">Shop smarter for auto parts.</h1>
-            <p class="page-subtitle">Find the best prices across top retailers in one search. AutoDEXX matches parts to your exact vehicle so you never buy the wrong thing.</p>
+            <p class="page-subtitle">Find the best prices across top retailers in one search. AutoDexx matches parts to your exact vehicle so you never buy the wrong thing.</p>
           </div>
           <div class="hero-actions wrap">
-            <router-link to="/garage" class="btn btn--primary">Open Garage</router-link>
-            <router-link to="/search" class="btn btn--outline">Browse Parts</router-link>
+            <router-link to="/search" class="btn btn--primary">New Search</router-link>
+            <router-link to="/auth" class="btn btn--outline">Sign In</router-link>
           </div>
         </div>
         <div class="hero-panel hero-panel--stack">
@@ -690,7 +952,7 @@ const HomePage = {
           <article v-for="part in store.recentParts" :key="part.id" class="part-card">
             <div class="part-card__top">
               <div>
-                <p class="muted">{{ part.category }}</p>
+                <p v-if="!part.isSearchRecord && part.category" class="muted">{{ part.category }}</p>
                 <h3 class="part-card__title">{{ part.name }}</h3>
               </div>
               <strong class="price">{{ money(part.offers[0].price) }}</strong>
@@ -725,10 +987,16 @@ const GaragePage = {
 
     onMounted(async () => {
       await form.initialize();
-      if (store.activeVehicle) {
-        await form.applyVehicle(store.activeVehicle);
-      }
     });
+
+    function toggleAddVehicleForm() {
+      showForm.value = !showForm.value;
+      if (showForm.value) {
+        form.clearSelection();
+        nickname.value = '';
+        formError.value = '';
+      }
+    }
 
     async function addVehicle() {
       formError.value = '';
@@ -828,37 +1096,51 @@ const GaragePage = {
       confirmRemove,
       confirmRemoveAction,
       vStr,
+      toggleAddVehicleForm,
     };
   },
   template: templateCache.GaragePage,
 };
 
 const SearchPage = {
+  components: { VehicleSelectionForm },
   setup() {
     const store = useStore();
+    const form = useVehicleSelection();
     const query = ref('');
-    const category = ref('All');
     const selectedGarageId = ref('');
 
-    const categories = computed(() => ['All', ...new Set(store.parts.map((part) => part.category))]);
-
-    const filteredParts = computed(() => {
-      return store.parts.filter((part) => {
-        const queryMatch = !query.value || [part.name, part.brand, part.category, ...part.tags].join(' ').toLowerCase().includes(query.value.toLowerCase());
-        const categoryMatch = category.value === 'All' || part.category === category.value;
-        const vehicleMatch = partMatchesVehicle(part, store.activeVehicle);
-        return queryMatch && categoryMatch && vehicleMatch;
-      });
+    const filteredParts = computed(() => store.parts.filter((part) => partMatchesVehicle(part, store.activeVehicle)));
+    const formVehicle = computed(() => ({
+      year: form.selectedYear.value,
+      make: form.selectedMake.value,
+      model: form.selectedModel.value,
+      trim: form.selectedTrim.value,
+      engine: form.selectedEngine.value,
+    }));
+    const isVehicleConfirmed = computed(() => {
+      if (!store.activeVehicle) return false;
+      return matchesVehicle(formVehicle.value, store.activeVehicle);
     });
 
     watch(
       () => vehicleKey(store.activeVehicle),
-      () => {
+      async () => {
         const matching = store.garageVehicles.find((vehicle) => matchesVehicle(vehicle, store.activeVehicle));
         selectedGarageId.value = matching?._id || '';
+        if (store.activeVehicle) {
+          await form.applyVehicle(store.activeVehicle);
+        }
       },
       { immediate: true },
     );
+
+    onMounted(async () => {
+      await form.initialize();
+      if (store.activeVehicle) {
+        await form.applyVehicle(store.activeVehicle);
+      }
+    });
 
     function handleVehiclePick() {
       const vehicle = store.garageVehicles.find((entry) => entry._id === selectedGarageId.value);
@@ -869,7 +1151,74 @@ const SearchPage = {
       }
     }
 
-    return { store, query, category, categories, filteredParts, selectedGarageId, handleVehiclePick, money, vehicleSummary };
+    function confirmVehicle() {
+      if (!form.selectedYear.value || !form.selectedMake.value || !form.selectedModel.value || !form.selectedTrim.value || !form.selectedEngine.value) {
+        store.partsError = 'Year, make, model, trim, and engine are required before searching.';
+        return;
+      }
+
+      store.persistConfirmedVehicle({
+        year: form.selectedYear.value,
+        make: form.selectedMake.value,
+        model: form.selectedModel.value,
+        trim: form.selectedTrim.value,
+        engine: form.selectedEngine.value,
+        bodyStyle: form.selectedBodyStyle.value,
+        driveType: form.selectedDriveType.value,
+      });
+      store.partsError = '';
+    }
+
+    function clearVehicleSelection() {
+      form.clearSelection();
+      store.clearConfirmedVehicle();
+      store.partsError = '';
+    }
+
+    async function submitSearch() {
+      try {
+        const partQuery = query.value.trim();
+        if (!partQuery) {
+          store.partsError = 'Please enter a part to search for.';
+          return;
+        }
+        if (!store.activeVehicle) {
+          store.partsError = 'Please select a vehicle before searching.';
+          return;
+        }
+
+        await store.searchRecommendations({
+          vehicleQuery: vehicleSummary(store.activeVehicle),
+          partQuery,
+        });
+      } catch (error) {
+        store.partsError = error.message || 'Autodexx is not available at the moment. Please try again later.';
+      }
+    }
+
+    async function clearHistory() {
+      try {
+        await store.clearSearchHistory();
+      } catch (error) {
+        store.partsError = error.message || 'Unable to clear search history right now.';
+      }
+    }
+
+    return {
+      store,
+      query,
+      filteredParts,
+      isVehicleConfirmed,
+      selectedGarageId,
+      handleVehiclePick,
+      submitSearch,
+      clearHistory,
+      confirmVehicle,
+      clearVehicleSelection,
+      money,
+      vehicleSummary,
+      ...form,
+    };
   },
   template: `
     <div class="stack-lg">
@@ -882,52 +1231,101 @@ const SearchPage = {
       </section>
 
       <section class="card stack-md">
-        <div class="search-filter-grid">
-          <div class="form-group">
-            <label for="part-query">Search parts</label>
-            <input id="part-query" v-model="query" class="form-input" placeholder="Brake pads, filters, suspension..." />
-          </div>
-          <div class="form-group">
-            <label for="category">Category</label>
-            <select id="category" v-model="category" class="form-select">
-              <option v-for="option in categories" :key="option" :value="option">{{ option }}</option>
-            </select>
-          </div>
-          <div class="form-group" v-if="store.garageVehicles.length">
-            <label for="garage-selection">Use saved vehicle</label>
-            <select id="garage-selection" v-model="selectedGarageId" class="form-select" @change="handleVehiclePick">
-              <option value="">No vehicle filter</option>
-              <option v-for="vehicle in store.garageVehicles" :key="vehicle._id" :value="vehicle._id">{{ vehicleSummary(vehicle) }}</option>
-            </select>
-          </div>
-        </div>
-        <div class="vehicle-summary">
-          <div class="vehicle-summary__text">{{ store.activeVehicle ? vehicleSummary(store.activeVehicle) : 'No confirmed vehicle selected' }}</div>
-          <div class="vehicle-summary__actions">
-            <router-link to="/garage" class="btn btn--outline">Manage Garage</router-link>
-            <button class="btn btn--outline" @click="store.clearConfirmedVehicle()" :disabled="!store.activeVehicle">Clear Vehicle</button>
-          </div>
+        <vehicle-selection-form
+          :tab="tab"
+          :years="years"
+          :makes="makes"
+          :models="models"
+          :trim-options="trimOptions"
+          :loading-years="loadingYears"
+          :loading-makes="loadingMakes"
+          :loading-models="loadingModels"
+          :loading-trims="loadingTrims"
+          :selected-year="selectedYear"
+          :selected-make="selectedMake"
+          :selected-model="selectedModel"
+          :selected-trim="selectedTrim"
+          :selected-engine="selectedEngine"
+          :vin-input="vinInput"
+          :vin-error="vinError"
+          :vin-loading="vinLoading"
+          :show-confirm="true"
+          :confirm-disabled="isVehicleConfirmed"
+          confirm-label="Confirm Vehicle"
+          @update:tab="tab = $event"
+          @update:selectedYear="selectedYear = $event"
+          @update:selectedMake="selectedMake = $event"
+          @update:selectedModel="selectedModel = $event"
+          @update:selectedTrim="selectedTrim = $event"
+          @update:selectedEngine="selectedEngine = $event"
+          @update:vinInput="vinInput = $event"
+          @decode-vin="decodeVin"
+          @confirm="confirmVehicle"
+          @clear="clearVehicleSelection"
+        />
+
+        <div v-if="!store.isAuthenticated" class="guest-banner">
+          Guest mode: searches are kept only for this browser session. Sign in to save history and watchlist data.
         </div>
       </section>
 
+      <section class="card stack-md">
+        <div class="search-action-grid">
+          <div class="form-group">
+            <label for="part-query">Enter part</label>
+            <input id="part-query" v-model="query" class="form-input" placeholder="Brake pads, filters, suspension..." />
+          </div>
+          <div class="form-group search-btn-group">
+            <button class="btn btn--primary" @click="submitSearch" :disabled="store.searchLoading">{{ store.searchLoading ? 'Searching...' : 'Search' }}</button>
+          </div>
+        </div>
+
+        <div class="form-group" v-if="store.garageVehicles.length">
+          <label for="garage-selection">Use saved vehicle</label>
+          <select id="garage-selection" v-model="selectedGarageId" class="form-select" @change="handleVehiclePick">
+            <option value="">No saved vehicle override</option>
+            <option v-for="vehicle in store.garageVehicles" :key="vehicle._id" :value="vehicle._id">{{ vehicleSummary(vehicle) }}</option>
+          </select>
+        </div>
+      </section>
+
+      <section v-if="store.searchLoading" class="card stack-sm">
+        <h3 class="card__title">Searching Retailers</h3>
+        <p>{{ store.searchStatusMessage }}</p>
+      </section>
+
+      <section v-if="store.partsError" class="card stack-sm">
+        <h3 class="card__title">Search Error</h3>
+        <p>{{ store.partsError }}</p>
+      </section>
+
+      <div class="inline-row inline-row--end">
+        <button class="btn btn--danger" @click="clearHistory" :disabled="store.searchLoading || store.parts.length === 0">Clear History</button>
+      </div>
+
       <div v-if="filteredParts.length === 0" class="card empty-state">
-        <div class="empty-state__title">No parts matched this filter.</div>
-        <p>Try a broader search or clear the vehicle filter.</p>
+        <div class="empty-state__title">No recommendation searches yet.</div>
+        <p>Run a search to fetch recommendations from all supported retailers.</p>
       </div>
 
       <section v-else class="parts-grid">
         <article v-for="part in filteredParts" :key="part.id" class="part-card">
           <div class="part-card__top">
             <div>
-              <p class="muted">{{ part.brand }} · {{ part.category }}</p>
+              <p v-if="!part.isSearchRecord && (part.brand || part.category)" class="muted">{{ [part.brand, part.category].filter(Boolean).join(' · ') }}</p>
               <h2 class="part-card__title">{{ part.name }}</h2>
             </div>
-            <strong class="price">{{ money(part.offers[0].price) }}</strong>
           </div>
           <p>{{ part.description }}</p>
           <div class="pill-row">
-            <span class="pill fitment-pill">{{ store.compatibilityLabel(part) }}</span>
             <span v-for="tag in part.tags.slice(0, 2)" :key="tag" class="pill">{{ tag }}</span>
+          </div>
+          <div class="retailer-offers-list">
+            <div v-for="offer in part.offers" :key="offer.retailer" class="retailer-offer-row">
+              <span class="retailer-offer-name">{{ offer.retailer }}</span>
+              <span class="retailer-offer-price price">{{ money(offer.price) }}</span>
+              <a :href="offer.affiliateUrl" target="_blank" rel="noreferrer" class="btn btn--outline btn--sm">Shop</a>
+            </div>
           </div>
           <div class="part-card__actions">
             <router-link :to="'/parts/' + part.id" class="btn btn--outline">View Details</router-link>
@@ -963,7 +1361,7 @@ const WatchlistPage = {
         <article v-for="part in store.watchlistParts" :key="part.id" class="part-card">
           <div class="part-card__top">
             <div>
-              <p class="muted">{{ part.brand }} · {{ part.category }}</p>
+              <p v-if="!part.isSearchRecord && (part.brand || part.category)" class="muted">{{ [part.brand, part.category].filter(Boolean).join(' · ') }}</p>
               <h2 class="part-card__title">{{ part.name }}</h2>
             </div>
             <strong class="price">{{ money(part.offers[0].price) }}</strong>
@@ -984,7 +1382,16 @@ const PartDetailPage = {
     const route = useRoute();
     const store = useStore();
     const part = computed(() => store.getPartById(route.params.id));
-    return { store, part, money, vehicleSummary, partMatchesVehicle };
+    const selectedOfferTag = ref('recommended');
+    const offerTags = ['recommended', 'lowest price', 'premium'];
+
+    const visibleOffers = computed(() => {
+      if (!part.value) return [];
+      const source = part.value.retailerOffersByTag?.[selectedOfferTag.value] || [];
+      return source;
+    });
+
+    return { store, part, money, vehicleSummary, partMatchesVehicle, selectedOfferTag, offerTags, visibleOffers };
   },
   template: `
     <div v-if="!part" class="card empty-state">
@@ -994,17 +1401,12 @@ const PartDetailPage = {
     <div v-else class="detail-layout">
       <section class="card stack-md">
         <div>
-          <p class="muted">{{ part.brand }} · {{ part.category }}</p>
+          <p v-if="!part.isSearchRecord && (part.brand || part.category)" class="muted">{{ [part.brand, part.category].filter(Boolean).join(' · ') }}</p>
           <h1 class="page-title" style="font-size:2.2rem;">{{ part.name }}</h1>
           <p class="page-subtitle">{{ part.description }}</p>
         </div>
         <div class="pill-row">
           <span v-for="tag in part.tags" :key="tag" class="pill">{{ tag }}</span>
-        </div>
-        <div class="card">
-          <h2 class="card__title">Compatibility</h2>
-          <p>{{ store.compatibilityLabel(part) }}</p>
-          <p class="muted">{{ part.compatibilityNote }}</p>
         </div>
         <div class="part-card__actions">
           <button class="btn btn--primary" @click="store.toggleWatchlist(part.id)">{{ store.isWatchlisted(part.id) ? 'Remove from Watchlist' : 'Save to Watchlist' }}</button>
@@ -1015,15 +1417,28 @@ const PartDetailPage = {
       <aside class="stack-md">
         <section class="card">
           <h2 class="card__title">Available Offers</h2>
+          <div class="pill-row" style="margin-bottom: 0.75rem;">
+            <button
+              v-for="tag in offerTags"
+              :key="tag"
+              class="btn btn--outline"
+              :class="{ 'btn--outline-active': selectedOfferTag === tag }"
+              @click="selectedOfferTag = tag"
+            >
+              {{ tag }}
+            </button>
+          </div>
           <div class="offer-grid">
-            <article v-for="offer in part.offers" :key="offer.retailer" class="offer-card stack-sm">
+            <article v-for="offer in visibleOffers" :key="offer.retailer + selectedOfferTag" class="offer-card stack-sm">
               <strong>{{ offer.retailer }}</strong>
               <span class="price">{{ money(offer.price) }}</span>
+              <span class="muted" v-if="offer.title">{{ offer.title }}</span>
               <span class="muted">{{ offer.availability }}</span>
               <span class="muted">{{ offer.warrantyLabel }}</span>
               <a :href="offer.affiliateUrl" target="_blank" rel="noreferrer" class="btn btn--outline">Open Offer</a>
             </article>
           </div>
+          <p class="muted" style="margin-top: 0.75rem;">*Part fitment is not guaranteed. You should always verify fitment before purchasing.</p>
         </section>
 
         <section class="card stack-sm">
@@ -1118,6 +1533,86 @@ const AuthPage = {
   template: templateCache.LoginPage,
 };
 
+const SettingsPage = {
+  setup() {
+    const store = useStore();
+    const router = useRouter();
+
+    const options = [
+      {
+        value: 'manual',
+        title: 'Automatic (Follow Browser Setting)',
+        description: 'Use your browser or OS preference automatically.',
+      },
+      {
+        value: 'light',
+        title: 'Light Mode',
+        description: 'Always use the light color scheme.',
+      },
+      {
+        value: 'dark',
+        title: 'Dark Mode',
+        description: 'Always use the dark color scheme.',
+      },
+    ];
+
+    async function logout() {
+      await store.logout();
+      router.push('/auth');
+    }
+
+    return { store, options, logout };
+  },
+  template: `
+    <div class="stack-lg">
+      <section class="section-header">
+        <div>
+          <p class="section-eyebrow">Settings</p>
+          <h1 class="page-title">Appearance and Account</h1>
+          <p class="page-subtitle">Manage your display preferences and account session.</p>
+        </div>
+      </section>
+
+      <div v-if="!store.isAuthenticated" class="card empty-state">
+        <div class="empty-state__title">Sign in to access settings.</div>
+        <p>Once you're signed in, you can manage account and display preferences here.</p>
+        <router-link to="/auth" class="btn btn--primary">Sign In</router-link>
+      </div>
+
+      <section v-else class="stack-md">
+        <article class="card stack-md">
+          <h2 class="card__title">Color Scheme</h2>
+          <p class="muted">Choose how AutoDexx applies light and dark mode.</p>
+
+          <div class="theme-options">
+            <label v-for="option in options" :key="option.value" class="theme-option">
+              <input
+                type="radio"
+                name="themePreference"
+                :value="option.value"
+                :checked="store.themePreference === option.value"
+                @change="store.setThemePreference(option.value)"
+              />
+              <div>
+                <strong>{{ option.title }}</strong>
+                <p class="form-help">{{ option.description }}</p>
+              </div>
+            </label>
+          </div>
+        </article>
+
+        <article class="card stack-sm">
+          <h2 class="card__title">Session</h2>
+          <p class="muted">Sign out of your account from this device.</p>
+          <div>
+            <button class="btn btn--danger" @click="logout">Log Out</button>
+          </div>
+        </article>
+      </section>
+    </div>
+  `,
+};
+
 const NotFoundPage = {
   template: `
     <div class="card empty-state">
@@ -1134,6 +1629,7 @@ const routes = [
   { path: '/search', component: SearchPage },
   { path: '/watchlist', component: WatchlistPage },
   { path: '/parts/:id', component: PartDetailPage },
+  { path: '/settings', component: SettingsPage },
   { path: '/auth', component: AuthPage },
   { path: '/:pathMatch(.*)*', component: NotFoundPage },
 ];
@@ -1148,20 +1644,57 @@ const router = createRouter({
 
 const App = {
   setup() {
-    return { store, vehicleSummary };
+    const prefersDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
+    let mediaQuery = null;
+    let mediaListener = null;
+
+    onMounted(() => {
+      if (!window.matchMedia) return;
+      mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      mediaListener = (event) => {
+        prefersDark.value = event.matches;
+      };
+
+      if (typeof mediaQuery.addEventListener === 'function') {
+        mediaQuery.addEventListener('change', mediaListener);
+      } else if (typeof mediaQuery.addListener === 'function') {
+        mediaQuery.addListener(mediaListener);
+      }
+    });
+
+    onUnmounted(() => {
+      if (!mediaQuery || !mediaListener) return;
+      if (typeof mediaQuery.removeEventListener === 'function') {
+        mediaQuery.removeEventListener('change', mediaListener);
+      } else if (typeof mediaQuery.removeListener === 'function') {
+        mediaQuery.removeListener(mediaListener);
+      }
+    });
+
+    const logoPath = computed(() => {
+      const useDarkLogo = store.themePreference === 'dark' || (store.themePreference === 'manual' && prefersDark.value);
+      return useDarkLogo ? '/autodexx_wide_glow.png' : '/autodexx_no_bkg_halo.png';
+    });
+
+    return {
+      store,
+      vehicleSummary,
+      logoPath,
+    };
   },
   template: `
     <div class="app-shell">
       <header class="site-header">
         <div class="header-inner">
-          <router-link to="/" class="logo">AutoDEXX</router-link>
+          <router-link to="/" class="logo" aria-label="AutoDexx home">
+            <img :src="logoPath" alt="AutoDexx" class="logo-image" />
+          </router-link>
           <nav class="header-nav">
             <router-link to="/garage" class="nav-link">Garage</router-link>
             <router-link to="/search" class="nav-link">Search</router-link>
             <router-link to="/watchlist" class="nav-link">Watchlist</router-link>
-            <span v-if="store.authUser" class="nav-user">{{ store.authUser.username }}</span>
+            <router-link v-if="store.authUser" to="/settings" class="nav-user">{{ store.authUser.username }}</router-link>
             <router-link v-if="!store.authUser" to="/auth" class="nav-link">Sign In</router-link>
-            <button v-else class="btn btn--outline btn--small" @click="store.logout()">Log Out</button>
           </nav>
         </div>
         <div class="vehicle-bar">
@@ -1186,6 +1719,7 @@ async function bootstrap() {
   AuthPage.template = templateCache.LoginPage;
 
   store = createStore();
+  applyThemePreference(store.themePreference);
   await store.refreshUser();
 
   const app = createApp(App);

@@ -5,7 +5,7 @@
       <h1 class="page-title">Manage your vehicles.</h1>
       <p class="page-subtitle">Save your vehicles to get personalized part recommendations and verified fitment for every search.</p>
     </div>
-    <button v-if="store.isAuthenticated" class="btn btn--primary" @click="showForm = !showForm">
+    <button v-if="store.isAuthenticated" class="btn btn--primary" @click="toggleAddVehicleForm">
       {{ showForm ? 'Cancel' : '+ Add Vehicle' }}
     </button>
   </section>

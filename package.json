@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "vite",
-    "dev:all": "concurrently -n backend,vue -c cyan,blue \"npm run backend\" \"npm run dev\"",
+    "dev": "npm run dev:all",
+    "dev:frontend": "vite",
+    "dev:all": "concurrently -n backend,vue -c cyan,blue \"npm run backend\" \"wait-on tcp:3000 && npm run dev:frontend\"",
     "backend": "npm --prefix ../../SE-4200/midterm_project start",
     "build": "vite build",
     "preview": "vite preview"
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
-    "vite": "6.3.5"
+    "vite": "6.3.5",
+    "wait-on": "^9.0.5"
   }
 }
