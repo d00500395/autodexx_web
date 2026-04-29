@@ -13,11 +13,12 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Add server directory to path
@@ -78,13 +79,13 @@ async def health():
 
 
 @app.post("/api/search")
-async def search(request: SearchRequest) -> SearchResponse:
+async def search(request: SearchRequest) -> StreamingResponse:
     """
     Search across all registered domains.
 
-    Takes vehicle and part queries, calls agent_3.0_domain_configurable for
-    each domain in parallel, and returns aggregated results with 3 recommendations
-    (lowest price, recommended, premium) per retailer.
+    Returns a streaming response that emits keepalive newlines every 15s to
+    prevent Cloudflare 524 timeouts, followed by a final JSON line with the
+    aggregated results.
     """
     vehicle_query = (request.vehicle_query or "").strip()
     part_query = (request.part_query or "").strip()
@@ -95,45 +96,56 @@ async def search(request: SearchRequest) -> SearchResponse:
             detail="Both vehicle_query and part_query are required",
         )
 
-    # List of all supported domains
     domains = ["oreillyauto.com", "ebay.com", "napaonline.com", "autozone.com", "rockauto.com"]
-
     logger.info(f"Starting multi-domain search: vehicle={vehicle_query}, part={part_query}")
 
-    results: dict[str, Any] = {}
-    errors: dict[str, str] = {}
+    async def generate() -> AsyncGenerator[str, None]:
+        # Run all domain searches; meanwhile yield keepalive newlines every 15s
+        tasks = [
+            run_agent(
+                domain=domain,
+                vehicle_query=vehicle_query,
+                part_query=part_query,
+            )
+            for domain in domains
+        ]
 
-    # Run agent for each domain in parallel
-    tasks = [
-        run_agent(
-            domain=domain,
+        gather_task = asyncio.ensure_future(asyncio.gather(*tasks, return_exceptions=True))
+
+        try:
+            while not gather_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(gather_task), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield "\n"  # keepalive byte — prevents Cloudflare 524
+        except Exception:
+            pass
+
+        responses = gather_task.result()
+
+        results: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+
+        for domain, response in zip(domains, responses):
+            if isinstance(response, Exception):
+                logger.error(f"Error querying {domain}: {response}")
+                errors[domain] = str(response)
+                results[domain] = None
+            else:
+                logger.info(f"Success querying {domain}: {len(response.get('llm_tagged_products', []))} recommendations")
+                results[domain] = response
+
+        payload = SearchResponse(
+            status="success" if not errors else "partial",
             vehicle_query=vehicle_query,
             part_query=part_query,
+            results=results,
+            errors=errors if errors else None,
+            timestamp=int(time.time()),
         )
-        for domain in domains
-    ]
+        yield payload.model_dump_json() + "\n"
 
-    responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for domain, response in zip(domains, responses):
-        if isinstance(response, Exception):
-            logger.error(f"Error querying {domain}: {response}")
-            errors[domain] = str(response)
-            results[domain] = None
-        else:
-            logger.info(f"Success querying {domain}: {len(response.get('llm_tagged_products', []))} recommendations")
-            results[domain] = response
-
-    timestamp = int(__import__("time").time())
-
-    return SearchResponse(
-        status="success" if not errors else "partial",
-        vehicle_query=vehicle_query,
-        part_query=part_query,
-        results=results,
-        errors=errors if errors else None,
-        timestamp=timestamp,
-    )
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @app.get("/api/domains")

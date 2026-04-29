@@ -352,10 +352,21 @@ function createStore() {
           }
           part = searchRecordToPart(payload.search);
         } else {
-          const payload = await apiFetch('/search', {
+          // /search returns application/x-ndjson streaming with keepalive newlines
+          // followed by the JSON result as the final line.
+          const raw = await fetch(`${API}/search`, {
             method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ vehicle_query: vehicleQuery, part_query: partQuery }),
           });
+          if (!raw.ok) {
+            const errBody = await raw.json().catch(() => ({}));
+            throw new Error(errBody?.error || errBody?.detail || `Request failed (${raw.status})`);
+          }
+          const text = await raw.text();
+          const lastLine = text.trim().split('\n').filter(Boolean).pop() || '{}';
+          const payload = JSON.parse(lastLine);
 
           if (payload.status === 'error') {
             throw new Error(payload.message || 'Autodexx is not available at the moment. Please try again later.');

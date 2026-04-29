@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,8 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from dotenv import load_dotenv
@@ -1086,7 +1089,10 @@ async def run_agent(
             resolved_target_url = str(tavily_selection["selected_url"])
 
         if is_api_based:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as httpx_client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(OLLAMA_TIMEOUT_SECONDS, connect=15.0),
+                follow_redirects=True,
+            ) as httpx_client:
                 products: list[dict[str, Any]] = []
                 if hasattr(adapter, "call_browse_api"):
                     products = await adapter.call_browse_api(
@@ -1108,13 +1114,17 @@ async def run_agent(
                 compact_products = [_compact_product(p) for p in enriched_products]
                 strict_matching_only = normalized_domain == "rockauto.com"
                 try:
+                    _llm_t0 = time.monotonic()
+                    logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
                     llm_review = await _review_products_with_ollama(
                         httpx_client,
                         vehicle_query=vehicle_query,
                         part_query=current_part_query,
                         compact_products=compact_products,
                     )
+                    logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
                 except Exception as exc:
+                    logger.error("[%s] LLM review failed after %.1fs: %s", normalized_domain, time.monotonic() - _llm_t0, exc)
                     if strict_matching_only:
                         llm_review = {
                             "matched_products": [],
@@ -1191,7 +1201,10 @@ async def run_agent(
                         )
                         products = bootstrap["products"]
 
-                        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as httpx_client:
+                        async with httpx.AsyncClient(
+                            timeout=httpx.Timeout(OLLAMA_TIMEOUT_SECONDS, connect=15.0),
+                            follow_redirects=True,
+                        ) as httpx_client:
                             supplemental = await adapter.fetch_supplemental_data(
                                 page, products, current_part_query, httpx_client
                             )
@@ -1203,13 +1216,17 @@ async def run_agent(
                             compact_products = [_compact_product(p) for p in enriched_products]
                             strict_matching_only = normalized_domain == "rockauto.com"
                             try:
+                                _llm_t0 = time.monotonic()
+                                logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
                                 llm_review = await _review_products_with_ollama(
                                     httpx_client,
                                     vehicle_query=vehicle_query,
                                     part_query=current_part_query,
                                     compact_products=compact_products,
                                 )
+                                logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
                             except Exception as exc:
+                                logger.error("[%s] LLM review failed after %.1fs: %s", normalized_domain, time.monotonic() - _llm_t0, exc)
                                 if strict_matching_only:
                                     llm_review = {
                                         "matched_products": [],
