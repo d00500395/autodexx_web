@@ -1113,28 +1113,32 @@ async def run_agent(
 
                 compact_products = [_compact_product(p) for p in enriched_products]
                 strict_matching_only = normalized_domain == "rockauto.com"
-                try:
-                    _llm_t0 = time.monotonic()
-                    logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
-                    llm_review = await _review_products_with_ollama(
-                        httpx_client,
-                        vehicle_query=vehicle_query,
-                        part_query=current_part_query,
-                        compact_products=compact_products,
-                    )
-                    logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
-                except Exception as exc:
-                    logger.error("[%s] LLM review failed after %.1fs: %s", normalized_domain, time.monotonic() - _llm_t0, exc)
-                    if strict_matching_only:
-                        llm_review = {
-                            "matched_products": [],
-                            "tagged_products": [],
-                            "should_rerun": True,
-                            "updated_part_query": current_part_query,
-                        }
-                    else:
-                        llm_review = _fallback_llm_decision(compact_products)
-                    llm_review["error"] = str(exc)
+                if not compact_products:
+                    logger.info("[%s] Skipping LLM review: 0 products", normalized_domain)
+                    llm_review = _fallback_llm_decision([])
+                else:
+                    try:
+                        _llm_t0 = time.monotonic()
+                        logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
+                        llm_review = await _review_products_with_ollama(
+                            httpx_client,
+                            vehicle_query=vehicle_query,
+                            part_query=current_part_query,
+                            compact_products=compact_products,
+                        )
+                        logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
+                    except Exception as exc:
+                        logger.error("[%s] LLM review failed after %.1fs: %s", normalized_domain, time.monotonic() - _llm_t0, exc)
+                        if strict_matching_only:
+                            llm_review = {
+                                "matched_products": [],
+                                "tagged_products": [],
+                                "should_rerun": True,
+                                "updated_part_query": current_part_query,
+                            }
+                        else:
+                            llm_review = _fallback_llm_decision(compact_products)
+                        llm_review["error"] = str(exc)
                 llm_review = _normalize_llm_review_urls(
                     llm_review,
                     base_url=resolved_target_url,
@@ -1215,28 +1219,32 @@ async def run_agent(
                             )
                             compact_products = [_compact_product(p) for p in enriched_products]
                             strict_matching_only = normalized_domain == "rockauto.com"
-                            try:
-                                _llm_t0 = time.monotonic()
-                                logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
-                                llm_review = await _review_products_with_ollama(
-                                    httpx_client,
-                                    vehicle_query=vehicle_query,
-                                    part_query=current_part_query,
-                                    compact_products=compact_products,
-                                )
-                                logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
-                            except Exception as exc:
-                                logger.error("[%s] LLM review failed after %.1fs: %s", normalized_domain, time.monotonic() - _llm_t0, exc)
-                                if strict_matching_only:
-                                    llm_review = {
-                                        "matched_products": [],
-                                        "tagged_products": [],
-                                        "should_rerun": True,
-                                        "updated_part_query": current_part_query,
-                                    }
-                                else:
-                                    llm_review = _fallback_llm_decision(compact_products)
-                                llm_review["error"] = str(exc)
+                            if not compact_products:
+                                logger.info("[%s] Skipping LLM review: 0 products", normalized_domain)
+                                llm_review = _fallback_llm_decision([])
+                            else:
+                                try:
+                                    _llm_t0 = time.monotonic()
+                                    logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
+                                    llm_review = await _review_products_with_ollama(
+                                        httpx_client,
+                                        vehicle_query=vehicle_query,
+                                        part_query=current_part_query,
+                                        compact_products=compact_products,
+                                    )
+                                    logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
+                                except Exception as exc:
+                                    logger.error("[%s] LLM review failed after %.1fs: %s", normalized_domain, time.monotonic() - _llm_t0, exc)
+                                    if strict_matching_only:
+                                        llm_review = {
+                                            "matched_products": [],
+                                            "tagged_products": [],
+                                            "should_rerun": True,
+                                            "updated_part_query": current_part_query,
+                                        }
+                                    else:
+                                        llm_review = _fallback_llm_decision(compact_products)
+                                    llm_review["error"] = str(exc)
                             llm_review = _normalize_llm_review_urls(
                                 llm_review,
                                 base_url=resolved_target_url,
