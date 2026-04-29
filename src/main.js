@@ -1290,7 +1290,7 @@ const SearchPage = {
       </section>
 
       <section v-if="store.searchLoading" class="card stack-sm">
-        <h3 class="card__title">Searching Retailers</h3>
+        <h3 class="card__title">Searching Retailers - Please be patient, this may take a while!</h3>
         <p>{{ store.searchStatusMessage }}</p>
       </section>
 
