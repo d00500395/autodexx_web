@@ -41,9 +41,9 @@ USER_DATA_DIR = OUTPUT_DIR / "chrome_profile"
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TAVILY_RESULTS = int(os.getenv("TAVILY_RESULTS", "8"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://golem:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.6:35b-a3b-coding-nvfp4")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
-LLM_MAX_PRODUCTS = int(os.getenv("LLM_MAX_PRODUCTS", "30"))
+LLM_MAX_PRODUCTS = int(os.getenv("LLM_MAX_PRODUCTS", "10"))
 
 DEFAULT_DOMAIN = "oreillyauto.com"
 DEFAULT_SEARCH_TERM = "brake rotor"
