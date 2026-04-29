@@ -43,6 +43,7 @@ TAVILY_RESULTS = int(os.getenv("TAVILY_RESULTS", "8"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://golem:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
+LLM_MAX_PRODUCTS = int(os.getenv("LLM_MAX_PRODUCTS", "30"))
 
 DEFAULT_DOMAIN = "oreillyauto.com"
 DEFAULT_SEARCH_TERM = "brake rotor"
@@ -172,6 +173,19 @@ def _compact_product(product: dict[str, Any]) -> dict[str, Any]:
         "href": product.get("href"),
         "availability": product.get("availability"),
     }
+
+
+def _products_for_llm(compact_products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if LLM_MAX_PRODUCTS <= 0:
+        return compact_products
+    if len(compact_products) <= LLM_MAX_PRODUCTS:
+        return compact_products
+    logger.info(
+        "Trimming LLM product input from %d to %d",
+        len(compact_products),
+        LLM_MAX_PRODUCTS,
+    )
+    return compact_products[:LLM_MAX_PRODUCTS]
 
 
 def _default_base_url_for_domain(domain: str | None) -> str:
@@ -1112,19 +1126,20 @@ async def run_agent(
                 )
 
                 compact_products = [_compact_product(p) for p in enriched_products]
+                llm_products = _products_for_llm(compact_products)
                 strict_matching_only = normalized_domain == "rockauto.com"
-                if not compact_products:
+                if not llm_products:
                     logger.info("[%s] Skipping LLM review: 0 products", normalized_domain)
                     llm_review = _fallback_llm_decision([])
                 else:
                     try:
                         _llm_t0 = time.monotonic()
-                        logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
+                        logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(llm_products))
                         llm_review = await _review_products_with_ollama(
                             httpx_client,
                             vehicle_query=vehicle_query,
                             part_query=current_part_query,
-                            compact_products=compact_products,
+                            compact_products=llm_products,
                         )
                         logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
                     except Exception as exc:
@@ -1137,7 +1152,7 @@ async def run_agent(
                                 "updated_part_query": current_part_query,
                             }
                         else:
-                            llm_review = _fallback_llm_decision(compact_products)
+                            llm_review = _fallback_llm_decision(llm_products)
                         llm_review["error"] = str(exc)
                 llm_review = _normalize_llm_review_urls(
                     llm_review,
@@ -1166,6 +1181,7 @@ async def run_agent(
                 "attempts": supplemental,
                 "products": enriched_products,
                 "products_for_llm": compact_products,
+                "llm_input_product_count": len(llm_products),
                 "llm_review": llm_review,
                 "ollama": {
                     "base_url": OLLAMA_BASE_URL,
@@ -1218,19 +1234,20 @@ async def run_agent(
                                 domain=normalized_domain,
                             )
                             compact_products = [_compact_product(p) for p in enriched_products]
+                            llm_products = _products_for_llm(compact_products)
                             strict_matching_only = normalized_domain == "rockauto.com"
-                            if not compact_products:
+                            if not llm_products:
                                 logger.info("[%s] Skipping LLM review: 0 products", normalized_domain)
                                 llm_review = _fallback_llm_decision([])
                             else:
                                 try:
                                     _llm_t0 = time.monotonic()
-                                    logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(compact_products))
+                                    logger.info("[%s] LLM review starting (%d products)", normalized_domain, len(llm_products))
                                     llm_review = await _review_products_with_ollama(
                                         httpx_client,
                                         vehicle_query=vehicle_query,
                                         part_query=current_part_query,
-                                        compact_products=compact_products,
+                                        compact_products=llm_products,
                                     )
                                     logger.info("[%s] LLM review completed in %.1fs", normalized_domain, time.monotonic() - _llm_t0)
                                 except Exception as exc:
@@ -1243,7 +1260,7 @@ async def run_agent(
                                             "updated_part_query": current_part_query,
                                         }
                                     else:
-                                        llm_review = _fallback_llm_decision(compact_products)
+                                        llm_review = _fallback_llm_decision(llm_products)
                                     llm_review["error"] = str(exc)
                             llm_review = _normalize_llm_review_urls(
                                 llm_review,
@@ -1294,6 +1311,7 @@ async def run_agent(
                             "attempts": supplemental,
                             "products": enriched_products,
                             "products_for_llm": compact_products,
+                            "llm_input_product_count": len(llm_products),
                             "llm_review": llm_review,
                             "ollama": {
                                 "base_url": OLLAMA_BASE_URL,

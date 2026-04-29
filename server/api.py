@@ -96,7 +96,7 @@ async def search(request: SearchRequest) -> StreamingResponse:
             detail="Both vehicle_query and part_query are required",
         )
 
-    domains = ["oreillyauto.com", "ebay.com", "napaonline.com", "autozone.com", "rockauto.com"]
+    domains = ["oreillyauto.com", "napaonline.com", "autozone.com", "rockauto.com"]
     logger.info(f"Starting multi-domain search: vehicle={vehicle_query}, part={part_query}")
 
     async def generate() -> AsyncGenerator[str, None]:
@@ -151,7 +151,7 @@ async def search(request: SearchRequest) -> StreamingResponse:
 @app.get("/api/domains")
 async def get_domains():
     """List all supported retail domains."""
-    domains = ["oreillyauto.com", "ebay.com", "napaonline.com", "autozone.com", "rockauto.com"]
+    domains = ["oreillyauto.com", "napaonline.com", "autozone.com", "rockauto.com"]
     return {"domains": domains}
 
 
