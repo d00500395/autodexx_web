@@ -38,7 +38,7 @@ USER_DATA_DIR = OUTPUT_DIR / "chrome_profile"
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TAVILY_RESULTS = int(os.getenv("TAVILY_RESULTS", "8"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://golem:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:latest")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
 
 DEFAULT_DOMAIN = "oreillyauto.com"
