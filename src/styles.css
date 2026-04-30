@@ -828,6 +828,10 @@ select {
   width: min(100%, 430px);
 }
 
+.auth-card .btn--block {
+  margin-top: 1.0rem;
+}
+
 .auth-title,
 .auth-subtitle,
 .centered {
